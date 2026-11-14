@@ -2,3 +2,20 @@ streamlit>=1.67  # tested version (AppTest-based UI tests fail on 1.58)
 requests
 pandas
 python-dotenv
+
+# Embedded backend (API_BASE_URL = "embedded", e.g. Streamlit Community Cloud): the FastAPI app from src/
+# runs inside the Streamlit process. Same list as src/requirements-deploy.txt (no torch: embeddings are
+# served by Cloudflare Workers AI @cf/baai/bge-m3).
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic-settings
+aiofiles
+langchain
+langchain-community
+langchain-text-splitters
+PyMuPDF
+motor
+openai
+qdrant-client
+PyJWT>=2.8
