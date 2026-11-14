@@ -77,12 +77,20 @@ def main():
         print(f"  upload {name} [{guess_doc_type(name)}]: {r.status_code} {r.json().get('signal')}")
 
     listing = requests.get(f"{api}/data/assets/{project}", headers=h).json()
+    processed_any = False
     for a in listing["assets"]:
         if a["processing_status"] in ("pending", "failed"):
             r = requests.post(f"{api}/data/process/{project}", headers=h, json={"file_id": a["file_id"]}, timeout=900)
             print(f"  process {a['document_name']}: {r.status_code} {r.json().get('inserted_chunks', r.json().get('signal'))}")
-    r = requests.post(f"{api}/nlp/index/push/{project}", headers=h, json={"do_reset": 1}, timeout=3600)
-    print(f"  build index: {r.status_code} {r.json().get('inserted_items_count', r.json().get('signal'))} chunks")
+            processed_any = processed_any or r.status_code == 200
+
+    summary = requests.get(f"{api}/data/assets/{project}", headers=h).json()["summary"]
+    if processed_any or summary["index_needs_rebuild"] or summary["awaiting_indexing"]:
+        # full rebuild from MongoDB keeps the index exactly in sync with ALL documents (old + new)
+        r = requests.post(f"{api}/nlp/index/push/{project}", headers=h, json={"do_reset": 1}, timeout=3600)
+        print(f"  build index: {r.status_code} {r.json().get('inserted_items_count', r.json().get('signal'))} chunks")
+    else:
+        print("  nothing new: the search index is already up to date")
     s = requests.get(f"{api}/data/assets/{project}", headers=h).json()["summary"]
     print(f"done: {s['total_documents']} documents ({s['lectures']} lectures, {s['labs']} labs), "
           f"{s['indexed_documents']} indexed, {s['processing_errors']} errors, {s['total_vectors']} vectors")
