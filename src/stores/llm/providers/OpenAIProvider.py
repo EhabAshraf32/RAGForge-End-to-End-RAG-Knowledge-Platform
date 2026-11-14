@@ -10,7 +10,8 @@ class OpenAIProvider(LLMInterface):
                        default_generation_max_output_tokens: int=1000,
                        default_generation_temperature: float=0.1,
                        default_generation_input_max_characters: int=20000,
-                       timeout: float=120):
+                       timeout: float=120,
+                       max_retries: int=2):
 
         self.api_key = api_key
         # base_url=None -> api.openai.com ; e.g. "https://openrouter.ai/api/v1" -> OpenRouter
@@ -32,6 +33,8 @@ class OpenAIProvider(LLMInterface):
             api_key = self.api_key,
             base_url = self.base_url,
             timeout = timeout,
+            # inside a fallback chain a rate-limited provider should hand over immediately
+            max_retries = max_retries,
         )
 
         self.enums=OpenAIEnums

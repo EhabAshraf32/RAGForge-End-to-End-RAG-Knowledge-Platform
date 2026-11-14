@@ -1,12 +1,12 @@
 
 from .LLMEnums import LLMEnums
-from .providers import OpenAIProvider, CoHereProvider, HuggingFaceProvider
+from .providers import OpenAIProvider, CoHereProvider, HuggingFaceProvider, FallbackProvider
 
 class LLMProviderFactory:
     def __init__(self, config: dict):
         self.config = config
 
-    def create(self, provider: str):
+    def create(self, provider: str, max_retries: int = 2):
         if provider == LLMEnums.OPENAI.value:
             return OpenAIProvider(
                 api_key = self.config.OPENAI_API_KEY,
@@ -16,6 +16,21 @@ class LLMProviderFactory:
                 default_generation_temperature=self.config.GENERATION_DAFAULT_TEMPERATURE,
                 default_generation_input_max_characters=self.config.GENERATION_DAFAULT_MAX_INPUT_CHARACTERS,
                 timeout=self.config.OPENAI_API_TIMEOUT,
+                max_retries=max_retries,
+            )
+
+        if provider == LLMEnums.GROQ.value:
+            if not getattr(self.config, "GROQ_API_KEY", None):
+                return None
+            return OpenAIProvider(
+                api_key = self.config.GROQ_API_KEY,
+                base_url = "https://api.groq.com/openai/v1",
+                default_input_max_characters=self.config.INPUT_DAFAULT_MAX_CHARACTERS,
+                default_generation_max_output_tokens=self.config.GENERATION_DAFAULT_MAX_TOKENS,
+                default_generation_temperature=self.config.GENERATION_DAFAULT_TEMPERATURE,
+                default_generation_input_max_characters=self.config.GENERATION_DAFAULT_MAX_INPUT_CHARACTERS,
+                timeout=self.config.OPENAI_API_TIMEOUT,
+                max_retries=max_retries,
             )
 
         if provider == LLMEnums.COHERE.value:
@@ -61,3 +76,29 @@ class LLMProviderFactory:
         #     )
 
         return None
+
+    def create_generation_client(self, backend: str, model_id: str, fallbacks: str = None):
+        """The generation client used by the app: a single provider, or - when GENERATION_FALLBACKS is set -
+        a FallbackProvider trying `backend:model_id` first and then each `BACKEND:MODEL_ID` in order."""
+        specs = [(backend, model_id)]
+        for item in (fallbacks or "").split(","):
+            item = item.strip()
+            if item:
+                fb_backend, _, fb_model = item.partition(":")
+                specs.append((fb_backend.strip().upper(), fb_model.strip()))
+
+        if len(specs) == 1:
+            client = self.create(provider=backend)
+            if client is not None:
+                client.set_generation_model(model_id=model_id)
+            return client
+
+        providers, names = [], []
+        for spec_backend, spec_model in specs:
+            client = self.create(provider=spec_backend, max_retries=0)  # hand over at once on 429
+            if client is None or not spec_model:
+                continue
+            client.set_generation_model(model_id=spec_model)
+            providers.append(client)
+            names.append(f"{spec_backend}:{spec_model}")
+        return FallbackProvider(providers, names) if providers else None

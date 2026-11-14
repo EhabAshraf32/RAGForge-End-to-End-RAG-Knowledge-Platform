@@ -6,6 +6,8 @@ class LLMEnums(Enum):
     HUGGINGFACE = "HUGGINGFACE"
     # Cloudflare Workers AI through its OpenAI-compatible endpoint (e.g. @cf/baai/bge-m3 embeddings)
     CLOUDFLARE = "CLOUDFLARE"
+    # Groq through its OpenAI-compatible endpoint
+    GROQ = "GROQ"
     # OPENROUTER="OPENAI-OPENROUTER"
 
 class OpenAIEnums(Enum):

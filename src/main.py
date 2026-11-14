@@ -33,10 +33,14 @@ async def startup_span():
 
 
     # generation client
-    app.generation_client = llm_provider_factory.create(provider=settings.GENERATION_BACKEND)
+    # single provider, or a fallback chain when GENERATION_FALLBACKS is set
+    app.generation_client = llm_provider_factory.create_generation_client(
+        backend=settings.GENERATION_BACKEND,
+        model_id=settings.GENERATION_MODEL_ID,
+        fallbacks=settings.GENERATION_FALLBACKS,
+    )
     if app.generation_client is None:
         raise RuntimeError(f"Generation backend {settings.GENERATION_BACKEND!r} is unknown or not configured")
-    app.generation_client.set_generation_model(model_id = settings.GENERATION_MODEL_ID)
 
     # embedding client
     app.embedding_client = llm_provider_factory.create(provider=settings.EMBEDDING_BACKEND)
