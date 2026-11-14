@@ -28,7 +28,7 @@ API_BASE_URL = _get("API_BASE_URL", "http://127.0.0.1:8000/api/v1")
 ADMIN_DEFAULT_PROJECT_ID = _get("ADMIN_DEFAULT_PROJECT_ID", "")
 # should match the backend FILE_MAX_SIZE (MB); the backend enforces it anyway
 MAX_UPLOAD_MB = int(_get("MAX_UPLOAD_MB", "10"))
-COURSE_TITLE = _get("COURSE_TITLE", "Structured Programming using C")
+COURSE_TITLE = _get("COURSE_TITLE", "Structured Programming")
 # must equal the backend TRUSTED_FRONTEND_SECRET; lets the backend rate-limit per end user instead of
 # per Streamlit server (all users of a hosted Streamlit app reach the API from the same IP)
 FRONTEND_SHARED_SECRET = _get("FRONTEND_SHARED_SECRET", "")

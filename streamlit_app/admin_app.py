@@ -13,7 +13,7 @@ from admin_actions import DOC_TYPES, build_index, process_documents, upload_batc
 from api_client import ApiError, BackendClient, friendly
 from identity import backend
 
-st.set_page_config(page_title="Course Admin - C Programming Assistant", page_icon="🛠️", layout="wide")
+st.set_page_config(page_title="Course Admin - Structured Programming Assistant", page_icon="🛠️", layout="wide")
 
 STATUS_LABELS = {
     "pending": "⏳ pending", "processed": "✅ processed", "failed": "❌ failed",
