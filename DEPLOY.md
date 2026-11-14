@@ -1,69 +1,50 @@
-# Public deployment (zero cost)
+# Public deployment (zero cost, no credit card)
 
-| Part | Service (free tier, no credit card) | Limits that matter |
+Free backend hosts tested for this project either need a card (Render's API and dashboard asked for one;
+Fly.io, Railway, Koyeb, Oracle) or a paid plan (Hugging Face Docker Spaces need PRO). So the existing FastAPI
+backend runs **inside each Streamlit app** (`API_BASE_URL = "embedded"`: real uvicorn on 127.0.0.1, same
+code, auth, roles, rate limits and RAG pipeline), and all data lives in free external services:
+
+```
+ Student browser ──https──▶ Streamlit Cloud: student_app.py ─┐  (embedded FastAPI, localhost only)
+ TA browser ──────https──▶ Streamlit Cloud: admin_app.py ────┤
+                                                              ├─▶ MongoDB Atlas M0  (assets, chunks, PDFs in GridFS)
+                                                              ├─▶ Qdrant Cloud free (vectors, 1024-d cosine)
+                                                              ├─▶ Cloudflare Workers AI @cf/baai/bge-m3 (embeddings)
+                                                              └─▶ OpenRouter :free model (answers)
+```
+
+| Part | Service | Free limits |
 |---|---|---|
-| Backend API (FastAPI) | **Render** free web service, from `render.yaml` | 512 MB RAM, sleeps after 15 min idle (~1 min cold start), 750 h/month. Ephemeral disk. **Never add a payment method**: without one, exceeding a limit suspends the service instead of billing. |
-| Database + uploaded PDFs | **MongoDB Atlas M0** (PDFs in GridFS) | 512 MB total. Paused after ~30 days with zero connections (resume in the dashboard). |
-| Vector index | **Qdrant Cloud** free cluster | 1 GB RAM / 4 GB disk. **Suspended after 1 week without use, deleted 4 weeks later** - log in and resume it if the course is idle. |
-| Embeddings | **Cloudflare Workers AI** `@cf/baai/bge-m3` (same model as local, 1024 dims) | 10,000 neurons/day (~9 M tokens). Beyond that requests fail until 00:00 UTC (no charge on the Free plan). |
-| Answers | **OpenRouter** `:free` model | **50 requests/day for the whole account**, 20/min. Each student question = 1 request. |
-| Student + TA portals | **Streamlit Community Cloud** (2 apps from this repo) | Apps sleep after 12 h without visitors (first visit wakes them). |
+| Portals + backend | Streamlit Community Cloud | Apps sleep after 12 h without visitors (next visit wakes them, ~1 min). |
+| Database + PDFs | MongoDB Atlas M0 | 512 MB. Paused after ~30 days without connections (resume in Atlas). |
+| Vectors | Qdrant Cloud free (`mini-rag-course`, AWS eu-central-1) | 1 GB RAM / 4 GB disk. **Suspended after 1 week unused, deleted 4 weeks later.** |
+| Embeddings | Cloudflare Workers AI bge-m3 | 10,000 neurons/day (~9 M tokens); then fails until 00:00 UTC, never billed on Free. |
+| Answers | OpenRouter `nvidia/nemotron-3.5-super-vl:free` | **50 requests/day per account** (20/min). |
 
-Credentials for production are generated locally in `E:\From-Transformers-To-Proffisional\production-credentials.txt`
-(outside the repository). Only hashes are entered into Render.
+Secrets are prepared locally (outside the repository) in:
+`E:\From-Transformers-To-Proffisional\streamlit-secrets-student.toml` and `...-admin.toml`.
+The student app has no admin credentials; the admin app has no student access code.
 
-## 1. MongoDB Atlas
-1. https://www.mongodb.com/cloud/atlas/register -> sign up (Google/GitHub is fine).
-2. Create a cluster -> **M0 (Free)** -> any region close to Render's region (e.g. AWS Frankfurt).
-3. Security -> Database Access -> add a database user (username + generated password).
-4. Security -> Network Access -> **Add IP address 0.0.0.0/0** (Render free has no fixed outbound IPs).
-5. Connect -> Drivers -> copy the `mongodb+srv://...` string and put the user's password in it -> this is `MONGODB_URL`.
-
-## 2. Qdrant Cloud
-1. https://cloud.qdrant.io -> sign up -> Create cluster -> **Free** tier.
-2. Copy the cluster URL (`https://xxxx.cloud.qdrant.io:6333`) -> `QDRANT_URL`.
-3. Cluster -> API Keys -> create a key -> `QDRANT_API_KEY`.
-
-## 3. Cloudflare Workers AI
-1. https://dash.cloudflare.com/sign-up -> free account (no payment method needed for the Workers Free plan).
-2. Copy your **Account ID** (right side of the dashboard home / Workers & Pages page) -> `CLOUDFLARE_ACCOUNT_ID`.
-3. My Profile -> API Tokens -> Create Token -> template **"Workers AI"** (permission Workers AI: Read) -> `CLOUDFLARE_API_TOKEN`.
-
-## 4. Render (backend)
-1. https://dashboard.render.com -> sign up with GitHub -> **do not add a payment method**.
-2. New -> **Blueprint** -> connect the repository `EhabAshraf32/RAGForge-End-to-End-RAG-Knowledge-Platform`,
-   branch **`deploy/public-platform`** -> Render reads `render.yaml` (service `mini-rag-api`, plan free).
-3. Fill the variables it asks for:
-   `MONGODB_URL`, `OPENAI_API_KEY` (your OpenRouter key), `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`,
-   `QDRANT_URL`, `QDRANT_API_KEY`, and from production-credentials.txt: `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`,
-   `STUDENT_ACCESS_CODE_HASH`, `TRUSTED_FRONTEND_SECRET`. (`JWT_SECRET_KEY` is generated by Render.)
-4. Deploy. When it is live, open `https://<service>.onrender.com/api/v1/` -> `{"app_name":"mini-RAG",...}`.
-
-## 5. Streamlit Community Cloud (two apps)
-1. https://share.streamlit.io -> sign in with GitHub -> **Create app** -> "Deploy a public app from GitHub".
-2. Student portal: repository as above, branch `deploy/public-platform`, main file `streamlit_app/student_app.py`,
-   app URL e.g. `cprog-ta` -> Advanced settings: Python **3.12**, Secrets:
-   ```toml
-   API_BASE_URL = "https://<service>.onrender.com/api/v1"
-   FRONTEND_SHARED_SECRET = "<TRUSTED_FRONTEND_SECRET value>"
-   COURSE_TITLE = "Structured Programming using C"
-   ```
-3. TA portal: same repository/branch, main file `streamlit_app/admin_app.py`, app URL e.g. `cprog-admin` ->
-   Python 3.12, Secrets: the same three lines plus `ADMIN_DEFAULT_PROJECT_ID = "cprog2026"`.
+## Steps
+1. **MongoDB Atlas**: Database -> Connect -> Drivers -> copy `mongodb+srv://...` (with the user's password);
+   Network Access -> `0.0.0.0/0`. Put it in both TOML files as `MONGODB_URL`.
+2. **Streamlit Community Cloud** (https://share.streamlit.io, sign in with GitHub) -> Create app ->
+   "Deploy a public app from GitHub":
+   - Repository `EhabAshraf32/RAGForge-End-to-End-RAG-Knowledge-Platform`, branch `deploy/public-platform`,
+     main file `streamlit_app/student_app.py`, App URL e.g. `cprog-c-ta`.
+   - Advanced settings -> Python **3.12** -> Secrets: paste the whole `streamlit-secrets-student.toml`.
+   - Repeat with main file `streamlit_app/admin_app.py`, App URL e.g. `cprog-c-admin`, and `streamlit-secrets-admin.toml`.
 
 ## Using it
-- **TA:** open the admin URL -> log in -> Upload PDFs (Lecture/Lab/Other, course, topic) -> Process documents ->
+- **TA**: admin URL -> log in (credentials in `production-credentials.txt`) -> Upload PDFs -> Process documents ->
   Build search index -> check the status table.
-- **Students:** open the student URL -> course access code -> ask in English or Arabic.
-- **Update the app:** push to `deploy/public-platform`, then Render -> Manual Deploy (auto-deploy is off on purpose);
-  Streamlit apps redeploy automatically on push.
+- **Students**: student URL -> course access code -> ask in English or Arabic.
+- **Update**: push to `deploy/public-platform`; Streamlit Cloud redeploys both apps automatically.
 
-## Monitoring free limits
-- OpenRouter: `GET https://openrouter.ai/api/v1/key` (with your key) shows usage; 50 answers/day without credits.
-- Cloudflare: dashboard -> AI -> Workers AI -> usage (neurons/day).
-- Render: dashboard -> service -> Metrics / free-hours usage.
-- Atlas: cluster -> Metrics -> data size (512 MB).
-- Qdrant Cloud: cluster status (resume it if suspended).
+## Monitoring
+- OpenRouter usage: `GET https://openrouter.ai/api/v1/key`. Cloudflare: dashboard -> AI -> Workers AI.
+- Atlas: cluster metrics (data size). Qdrant Cloud: cluster status (resume if suspended).
+- Streamlit Cloud: app -> Manage app -> logs.
 
-When a limit is reached nothing is billed: answers fail with a clear message ("AI service is busy"), or the
-Render service is suspended until next month. Uploaded documents and vectors stay in Atlas / Qdrant Cloud.
+Nothing is billed when a limit is reached: answers fail with a clear message until the limit resets.
