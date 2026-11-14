@@ -30,7 +30,7 @@ def guess_doc_type(name: str):
     n = name.lower()
     if re.search(r"lab|sheet|exercise|assignment|tutorial|section", n):
         return "lab"
-    if re.search(r"lec|lecture|chapter|ch\d|slides", n):
+    if re.search(r"lec|lecture|chapter|ch\d|slides|week", n):
         return "lecture"
     return "other"
 
