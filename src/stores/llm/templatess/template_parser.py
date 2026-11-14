@@ -13,6 +13,7 @@ class TemplateParser:
     def set_language(self, language: str):
         if not language:
             self.language = self.default_language
+            return
 
         language_path = os.path.join(self.current_path, "locales", language)
         if os.path.exists(language_path):
@@ -20,12 +21,20 @@ class TemplateParser:
         else:
             self.language = self.default_language
 
-    def get(self, group: str, key: str, vars: dict={}):
+    def get(self, group: str, key: str, vars: dict=None, language: str=None):
+        """`language` optionally overrides the configured language for this call only
+        (falls back to the configured language, then the default language)."""
+        if vars is None:
+            vars = {}
+
         if not group or not key:
             return None
-        
-        group_path = os.path.join(self.current_path, "locales", self.language, f"{group}.py" )
+
         targeted_language = self.language
+        if language and os.path.exists(os.path.join(self.current_path, "locales", language)):
+            targeted_language = language
+
+        group_path = os.path.join(self.current_path, "locales", targeted_language, f"{group}.py" )
         if not os.path.exists(group_path):
             group_path = os.path.join(self.current_path, "locales", self.default_language, f"{group}.py" )
             targeted_language = self.default_language

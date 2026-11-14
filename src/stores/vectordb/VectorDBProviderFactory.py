@@ -14,6 +14,8 @@ class VectorDBProviderFactory:
             return QdrantDBProvider(
                 db_path=db_path,
                 distance_method=self.config.VECTOR_DB_DISTANCE_METHOD,
+                url=self.config.QDRANT_URL,          # None -> embedded storage in db_path (default)
+                api_key=self.config.QDRANT_API_KEY,
             )
         
         return None

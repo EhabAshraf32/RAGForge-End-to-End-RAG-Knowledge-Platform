@@ -1,3 +1,7 @@
+from pathlib import Path
+import gc
+import os
+import shutil
 from models.db_schemes.data_chunk import RetrievedDocument
 from qdrant_client import models, QdrantClient
 from ..VectorDBInterface import VectorDBInterface
@@ -7,10 +11,16 @@ from typing import List
 
 class QdrantDBProvider(VectorDBInterface):
 
-    def __init__(self, db_path: str, distance_method: str):
+    # payload fields used in filters (doc_type filter, per-file count / delete)
+    INDEXED_PAYLOAD_FIELDS = ("metadata.doc_type", "metadata.file_id")
+
+    def __init__(self, db_path: str, distance_method: str, url: str = None, api_key: str = None):
 
         self.client = None
         self.db_path = db_path
+        # url set -> Qdrant server / Qdrant Cloud; otherwise embedded storage in db_path
+        self.url = url
+        self.api_key = api_key
         self.distance_method = None
 
         if distance_method == DistanceMethodEnums.COSINE.value:
@@ -20,7 +30,16 @@ class QdrantDBProvider(VectorDBInterface):
 
         self.logger = logging.getLogger(__name__)
 
+    def is_remote(self):
+        return bool(self.url)
+
     def connect(self):
+        if self.is_remote():
+            self.client = QdrantClient(url=self.url, api_key=self.api_key, timeout=60)
+            self.logger.info("Connected to remote Qdrant")
+            return
+        print("Current working directory:", Path.cwd())
+        print("Qdrant path:", Path(self.db_path).resolve())
         self.client = QdrantClient(path=self.db_path)
 
     def disconnect(self):
@@ -37,7 +56,29 @@ class QdrantDBProvider(VectorDBInterface):
     
     def delete_collection(self, collection_name: str):
         if self.is_collection_existed(collection_name):
-            return self.client.delete_collection(collection_name=collection_name)
+            result = self.client.delete_collection(collection_name=collection_name)
+            self._remove_local_collection_files(collection_name)
+            return result
+
+    def _remove_local_collection_files(self, collection_name: str):
+        """
+        Local (embedded) Qdrant drops the collection object without closing its SQLite file and then
+        calls rmtree(ignore_errors=True). On Windows the still-open file cannot be removed, and the next
+        create_collection with the same name silently reloads the OLD points (do_reset would not reset).
+        Collect the orphaned connection and remove ONLY this collection's directory inside db_path.
+        """
+        if self.is_remote():  # a Qdrant server manages its own storage
+            return
+        gc.collect()
+        base = os.path.realpath(os.path.join(self.db_path, "collection"))
+        target = os.path.realpath(os.path.join(base, collection_name))
+        if os.path.dirname(target) != base:  # never touch anything outside <db_path>/collection/
+            self.logger.error(f"Refusing to remove unexpected path for collection {collection_name}")
+            return
+        if os.path.isdir(target):
+            shutil.rmtree(target, ignore_errors=True)
+            if os.path.isdir(target):
+                self.logger.error(f"Could not remove local files of deleted collection {collection_name}")
         
     def create_collection(self, collection_name: str, 
                                 embedding_size: int,
@@ -53,6 +94,11 @@ class QdrantDBProvider(VectorDBInterface):
                     distance=self.distance_method
                 )
             )
+            if self.is_remote():
+                # Qdrant servers can require an index for filtered queries (local mode ignores indexes)
+                for field in self.INDEXED_PAYLOAD_FIELDS:
+                    self.client.create_payload_index(collection_name=collection_name, field_name=field,
+                                                     field_schema=models.PayloadSchemaType.KEYWORD)
 
             return True
         
@@ -195,12 +241,54 @@ class QdrantDBProvider(VectorDBInterface):
 
         return True
         
-    def search_by_vector(self, collection_name: str, vector: list, limit: int = 5):
+    def get_collection_vector_size(self, collection_name: str) -> int:
+        if not self.is_collection_existed(collection_name):
+            return None
+        info = self.get_collection_info(collection_name=collection_name)
+        vectors = info.config.params.vectors
+        return getattr(vectors, "size", None)
+
+    def _metadata_filter(self, filter_metadata: dict):
+        """Exact-match filter on payload metadata, e.g. {"doc_type": "lab"}."""
+        if not filter_metadata:
+            return None
+        return models.Filter(
+            must=[
+                models.FieldCondition(
+                    key=f"metadata.{key}",
+                    match=models.MatchValue(value=value)
+                )
+                for key, value in filter_metadata.items()
+            ]
+        )
+
+    def count_by_metadata(self, collection_name: str, filter_metadata: dict) -> int:
+        if not self.is_collection_existed(collection_name):
+            return 0
+        return self.client.count(collection_name=collection_name,
+                                 count_filter=self._metadata_filter(filter_metadata), exact=True).count
+
+    def delete_by_metadata(self, collection_name: str, filter_metadata: dict) -> bool:
+        """Delete only the points matching ALL given metadata values (refuses an empty filter)."""
+        if not filter_metadata:
+            self.logger.error("Refusing delete_by_metadata without a filter")
+            return False
+        if not self.is_collection_existed(collection_name):
+            return True
+        self.client.delete(collection_name=collection_name,
+                           points_selector=models.FilterSelector(filter=self._metadata_filter(filter_metadata)))
+        return True
+
+    def search_by_vector(self, collection_name: str, vector: list, limit: int = 5,
+                               filter_metadata: dict = None):
+
+        query_filter = self._metadata_filter(filter_metadata)
 
         result = self.client.query_points(
             collection_name=collection_name,
             query=vector,
-            limit=limit
+            limit=limit,
+            query_filter=query_filter,
         )
         
         if not result.points:
@@ -210,6 +298,7 @@ class QdrantDBProvider(VectorDBInterface):
             RetrievedDocument(**{
                 "score": point.score,
                 "text": point.payload["text"],
-            }) 
+                "metadata": point.payload.get("metadata"),
+            })
             for point in result.points
         ]

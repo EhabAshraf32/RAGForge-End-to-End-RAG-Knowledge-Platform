@@ -1,0 +1,16 @@
+# Hosted backend (Render free, 512 MB RAM): same as requirements.txt WITHOUT the local Hugging Face stack.
+# Embeddings run on Cloudflare Workers AI (@cf/baai/bge-m3) -> no torch / transformers needed (~160 MB RSS).
+fastapi
+uvicorn[standard]
+python-multipart
+python-dotenv
+pydantic-settings
+aiofiles
+langchain
+langchain-community
+langchain-text-splitters
+PyMuPDF
+motor
+openai
+qdrant-client
+PyJWT>=2.8

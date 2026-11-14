@@ -1,10 +1,11 @@
-from fastapi import FastAPI, APIRouter, status, Request
+from fastapi import FastAPI, APIRouter, status, Request, Depends
+from .dependencies import require_admin, answer_rate_limit, check_project_access
 from fastapi.responses import JSONResponse
 from routes.schemes.nlp import PushRequest, SearchRequest
 from models.ProjectModel import ProjectModel
 from models.ChunkModel import ChunkModel
 from controllers import NLPController
-from models import ResponseSignal
+from models import ResponseSignal, DocTypeEnum
 
 import logging
 
@@ -15,7 +16,7 @@ nlp_router = APIRouter(
     tags=["api_v1", "nlp"],
 )
 
-@nlp_router.post("/index/push/{project_id}")
+@nlp_router.post("/index/push/{project_id}", dependencies=[Depends(require_admin)])
 async def index_project(request: Request, project_id: str, push_request: PushRequest):
 
     project_model = await ProjectModel.create_instance(
@@ -46,6 +47,10 @@ async def index_project(request: Request, project_id: str, push_request: PushReq
 
     )
 
+    # reset ONCE before paging (resetting inside the loop wiped every previous page)
+    if push_request.do_reset:
+        _ = nlp_controller.reset_vector_db_collection(project=project)
+
     has_records = True
     page_no = 1
     inserted_items_count = 0
@@ -66,7 +71,7 @@ async def index_project(request: Request, project_id: str, push_request: PushReq
         is_inserted = nlp_controller.index_into_vector_db(
             project=project,
             chunks=page_chunks,
-            do_reset=push_request.do_reset,
+            do_reset=False,
             chunks_ids=chunks_ids
         )
 
@@ -87,7 +92,7 @@ async def index_project(request: Request, project_id: str, push_request: PushReq
         }
     )
 
-@nlp_router.get("/index/info/{project_id}")
+@nlp_router.get("/index/info/{project_id}", dependencies=[Depends(require_admin)])
 async def get_project_index_info(request: Request, project_id: str):
     
     project_model = await ProjectModel.create_instance(
@@ -115,7 +120,7 @@ async def get_project_index_info(request: Request, project_id: str):
         }
     )
 
-@nlp_router.post("/index/search/{project_id}")
+@nlp_router.post("/index/search/{project_id}", dependencies=[Depends(require_admin)])
 async def search_index(request: Request, project_id: str, search_request: SearchRequest):
     
     project_model = await ProjectModel.create_instance(
@@ -133,8 +138,16 @@ async def search_index(request: Request, project_id: str, search_request: Search
         template_parser=request.app.template_parser,
     )
 
+    doc_type = DocTypeEnum.normalize(search_request.doc_type) if search_request.doc_type else None
+    if search_request.doc_type and doc_type is None:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"signal": ResponseSignal.DOC_TYPE_NOT_SUPPORTED.value}
+        )
+
     results = nlp_controller.search_vector_db_collection(
-        project=project, text=search_request.text, limit=search_request.limit
+        project=project, text=search_request.text, limit=search_request.limit,
+        doc_type=doc_type,
     )
 
     if not results:
@@ -154,8 +167,12 @@ async def search_index(request: Request, project_id: str, search_request: Search
 )
 
 @nlp_router.post("/index/answer/{project_id}")
-async def answer_rag(request: Request, project_id: str, search_request: SearchRequest):
-    
+async def answer_rag(request: Request, project_id: str, search_request: SearchRequest,
+                     user: dict = Depends(answer_rate_limit)):
+
+    # students: only the course project bound to their token (checked before anything is created)
+    check_project_access(user, project_id)
+
     project_model = await ProjectModel.create_instance(
         db_client=request.app.db_client
     )
@@ -171,10 +188,19 @@ async def answer_rag(request: Request, project_id: str, search_request: SearchRe
         template_parser=request.app.template_parser,
     )
 
-    answer, full_prompt, chat_history = nlp_controller.answer_rag_question(
+    doc_type = DocTypeEnum.normalize(search_request.doc_type) if search_request.doc_type else None
+    if search_request.doc_type and doc_type is None:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"signal": ResponseSignal.DOC_TYPE_NOT_SUPPORTED.value}
+        )
+
+    answer, full_prompt, chat_history, sources = nlp_controller.answer_rag_question(
         project=project,
         query=search_request.text,
         limit=search_request.limit,
+        doc_type=doc_type,
+        chat_history=[turn.dict() for turn in search_request.chat_history or []],
     )
 
     if not answer:
@@ -184,11 +210,15 @@ async def answer_rag(request: Request, project_id: str, search_request: SearchRe
                     "signal": ResponseSignal.RAG_ANSWER_ERROR.value
                 }
         )
-    
+
     return JSONResponse(
         content={
             "signal": ResponseSignal.RAG_ANSWER_SUCCESS.value,
             "answer": answer,
+            # built by the backend from retrieved chunk metadata (never parsed from LLM text):
+            #   cited     -> excerpts the model reported using (validated against the retrieved list)
+            #   retrieved -> everything retrieved for this question, with similarity scores
+            "sources": sources,
             "full_prompt": full_prompt,
             "chat_history": chat_history
         }

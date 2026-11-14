@@ -1,5 +1,6 @@
 from helpers.config import get_settings, Settings
 import os
+import re
 import random
 import string
 
@@ -23,6 +24,14 @@ class BaseController:
         
     def generate_random_string(self, length: int=12):
         return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
+
+    def get_original_file_name(self, file_id: str):
+        """Strip the '<12 random chars>_' prefix added by DataController.generate_unique_filepath."""
+        if not file_id:
+            return None
+        file_name = os.path.basename(str(file_id))
+        match = re.match(r"^[a-z0-9]{12}_(.+)$", file_name)
+        return match.group(1) if match else file_name
 
     def get_database_path(self, db_name: str):
 

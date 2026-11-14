@@ -4,6 +4,9 @@ class LLMEnums(Enum):
     OPENAI = "OPENAI"
     COHERE = "COHERE"
     HUGGINGFACE = "HUGGINGFACE"
+    # Cloudflare Workers AI through its OpenAI-compatible endpoint (e.g. @cf/baai/bge-m3 embeddings)
+    CLOUDFLARE = "CLOUDFLARE"
+    # OPENROUTER="OPENAI-OPENROUTER"
 
 class OpenAIEnums(Enum):
     SYSTEM = "system"

@@ -1,0 +1,4 @@
+streamlit>=1.67  # tested version (AppTest-based UI tests fail on 1.58)
+requests
+pandas
+python-dotenv

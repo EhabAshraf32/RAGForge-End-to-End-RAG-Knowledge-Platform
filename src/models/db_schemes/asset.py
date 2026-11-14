@@ -9,8 +9,13 @@ class Asset(BaseModel):
     asset_type: str = Field(..., min_length=1)
     asset_name: str = Field(..., min_length=1)
     asset_size: int = Field(ge=0, default=None)
-    asset_config: dict = Field(default=None)
-    asset_pushed_at: datetime = Field(default=datetime.utcnow)
+    # {"original_name", "doc_type", "course", "topic"} set at upload; None for assets uploaded before
+    asset_config: Optional[dict] = Field(default=None)
+    # upload time; set explicitly at upload (the old default was the function object itself and was
+    # never stored because inserts use exclude_unset) -> None for assets uploaded before this fix
+    asset_pushed_at: Optional[datetime] = Field(default=None)
+    # last processing result written by /data/process: {"status", "chunks", "error", "processed_at"}
+    asset_processing: Optional[dict] = Field(default=None)
 
     class Config:
         arbitrary_types_allowed = True

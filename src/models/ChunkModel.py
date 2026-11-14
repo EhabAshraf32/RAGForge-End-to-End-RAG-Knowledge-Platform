@@ -70,13 +70,26 @@ class ChunkModel(BaseDataModel):
         })
 
         return result.deleted_count
-    
 
-        
+    async def delete_chunks_by_asset_id(self, project_id: ObjectId, asset_id: ObjectId):
+        result = await self.collection.delete_many({
+            "chunk_project_id": project_id,
+            "chunk_asset_id": asset_id,
+        })
+        return result.deleted_count
+
+    async def count_chunks_by_asset(self, project_id: ObjectId):
+        """{asset_id: number_of_chunks} for one project."""
+        cursor = self.collection.aggregate([
+            {"$match": {"chunk_project_id": project_id}},
+            {"$group": {"_id": "$chunk_asset_id", "count": {"$sum": 1}}},
+        ])
+        return {doc["_id"]: doc["count"] async for doc in cursor}
+
     async def get_poject_chunks(self, project_id: ObjectId, page_no: int=1, page_size: int=50):
         records = await self.collection.find({
                     "chunk_project_id": project_id
-                }).skip(
+                }).sort("_id", 1).skip(
                     (page_no-1) * page_size
                 ).limit(page_size).to_list(length=None)
 

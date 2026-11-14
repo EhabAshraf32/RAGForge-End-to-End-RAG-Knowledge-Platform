@@ -48,7 +48,20 @@ class VectorDBInterface(ABC):
         pass
 
     @abstractmethod
-    def search_by_vector(self, collection_name: str, vector: list, limit: int) -> List[RetrievedDocument]:
+    def search_by_vector(self, collection_name: str, vector: list, limit: int,
+                               filter_metadata: dict = None) -> List[RetrievedDocument]:
+        pass
+
+    @abstractmethod
+    def get_collection_vector_size(self, collection_name: str) -> int:
+        pass
+
+    @abstractmethod
+    def count_by_metadata(self, collection_name: str, filter_metadata: dict) -> int:
+        pass
+
+    @abstractmethod
+    def delete_by_metadata(self, collection_name: str, filter_metadata: dict) -> bool:
         pass
     
     

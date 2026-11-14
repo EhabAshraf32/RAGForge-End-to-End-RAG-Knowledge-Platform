@@ -55,8 +55,19 @@ class AssetModel(BaseDataModel):
 
         if record:
             return Asset(**record)
-        
+
         return None
+
+    async def update_asset_processing(self, asset_id: ObjectId, processing: dict):
+        result = await self.collection.update_one(
+            {"_id": asset_id},
+            {"$set": {"asset_processing": processing}}
+        )
+        return result.modified_count
+
+    async def delete_asset(self, asset_id: ObjectId):
+        result = await self.collection.delete_one({"_id": asset_id})
+        return result.deleted_count
 
 
     

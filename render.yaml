@@ -1,0 +1,85 @@
+# Render Blueprint - FastAPI backend on the FREE plan (no payment method needed; do NOT add one, so that
+# exceeding a free limit suspends the service instead of billing).
+# Secrets use `sync: false`: Render asks for them in the dashboard; they are never stored in this repo.
+services:
+  - type: web
+    name: mini-rag-api
+    runtime: python
+    plan: free
+    rootDir: src
+    buildCommand: pip install -r requirements-deploy.txt
+    # one worker: the in-memory rate limiter is per process
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /api/v1/
+    autoDeploy: false
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      # ---- app
+      - key: APP_NAME
+        value: mini-RAG
+      - key: APP_VERSION
+        value: "1.0"
+      - key: FILE_ALLOWED_TYPES
+        value: '["application/pdf"]'
+      - key: FILE_MAX_SIZE
+        value: "10"
+      - key: FILE_DEFAULT_CHUNK_SIZE
+        value: "512000"
+      - key: STORE_FILES_IN_DB
+        value: "true"
+      # ---- MongoDB Atlas (M0 free)
+      - key: MONGODB_URL
+        sync: false
+      - key: MONGODB_DATABASE
+        value: mini_rag_prod
+      # ---- generation: OpenRouter (OpenAI-compatible)
+      - key: GENERATION_BACKEND
+        value: OPENAI
+      - key: OPENAI_API_URL
+        value: https://openrouter.ai/api/v1
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GENERATION_MODEL_ID
+        value: nvidia/nemotron-3.5-super-vl:free
+      - key: GENERATION_DAFAULT_MAX_TOKENS
+        value: "3000"
+      - key: GENERATION_DAFAULT_TEMPERATURE
+        value: "0.1"
+      # ---- embeddings: BAAI/bge-m3 hosted on Cloudflare Workers AI (free 10k neurons/day)
+      - key: EMBEDDING_BACKEND
+        value: CLOUDFLARE
+      - key: EMBEDDING_MODEL_ID
+        value: "@cf/baai/bge-m3"
+      - key: EMBEDDING_MODEL_SIZE
+        value: "1024"
+      - key: INPUT_DAFAULT_MAX_CHARACTERS
+        value: "1024"
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      # ---- vectors: Qdrant Cloud (free cluster)
+      - key: VECTOR_DB_BACKEND
+        value: QDRANT
+      - key: VECTOR_DB_PATH
+        value: qdrant_db
+      - key: VECTOR_DB_DISTANCE_METHOD
+        value: cosine
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      # ---- security
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
+      - key: STUDENT_ACCESS_CODE_HASH
+        sync: false
+      - key: STUDENT_PROJECT_ID
+        value: cprog2026
+      - key: TRUSTED_FRONTEND_SECRET
+        sync: false

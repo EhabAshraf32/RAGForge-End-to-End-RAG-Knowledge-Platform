@@ -39,19 +39,21 @@ A modular **Retrieval-Augmented Generation (RAG)** application — a FastAPI bac
 ## 🏗️ Architecture
 
 - **`src/`** — the FastAPI backend
-  - `routes/` — API routes (`base`, `data`, `nlp`)
+  - `routes/` — API routes (`base`, `auth`, `data`, `nlp`) + `dependencies.py` (auth, roles, rate limits)
   - `controllers/` — business logic (upload validation, chunking, project/asset management)
   - `models/` — Mongo-backed data models and schemes (`Project`, `Asset`, `DataChunk`)
   - `stores/llm/` — LLM & embedding provider abstraction (`LLMInterface` + OpenAI/Cohere/HuggingFace providers)
   - `stores/vectordb/` — vector DB abstraction (`VectorDBInterface` + Qdrant provider)
-- **`streamlit_app/`** — the Streamlit frontend, calling the backend purely over HTTP (no RAG logic duplicated on the UI side)
+- **`streamlit_app/`** — two Streamlit frontends that call the backend purely over HTTP (no RAG logic in the UI):
+  `admin_app.py` (TA dashboard: upload / process / index / manage materials) and `student_app.py` (student chat)
 - **`docker/`** — `docker-compose.yaml` to run MongoDB locally
 
 ## 📦 Requirements
 
-- Python 3.8+
+- Python 3.12 (tested; 3.10 also passes the test suite)
 - MongoDB (via Docker, or your own instance)
-- An OpenAI and/or Cohere API key (or point `GENERATION_BACKEND` / `EMBEDDING_BACKEND` at whichever provider you configure)
+- An OpenRouter API key for generation (`OPENAI_API_KEY` + `OPENAI_API_URL=https://openrouter.ai/api/v1`)
+- ~2.5 GB disk and ~2 GB RAM for the local `BAAI/bge-m3` embedding model (downloaded on first start; set `HF_HOME` to choose the cache location)
 
 ## 🚀 Getting started
 
@@ -61,9 +63,14 @@ A modular **Retrieval-Augmented Generation (RAG)** application — a FastAPI bac
 git clone https://github.com/<your-username>/RAGForge.git
 cd RAGForge
 
-conda create -n ragforge python=3.8
+conda create -n ragforge python=3.12
 conda activate ragforge
 ```
+
+> On Windows with little space on C:, create the environment on another drive and keep all caches there, e.g.
+> `conda create -p E:\envs\mini-rag python=3.12`, then
+> `conda env config vars set -p E:\envs\mini-rag PYTHONNOUSERSITE=1 HF_HOME=E:\hf_cache PIP_CACHE_DIR=E:\pip_cache`
+> (`PYTHONNOUSERSITE=1` stops packages from the user site-packages on C: leaking into the environment).
 
 ### 2. Start MongoDB
 
@@ -92,16 +99,36 @@ Fill in `.env` — at minimum:
 | `FILE_MAX_SIZE` | Max upload size in MB |
 | `FILE_DEFAULT_CHUNK_SIZE` | Byte-read chunk size for streaming uploads |
 | `MONGODB_URL`, `MONGODB_DATABASE` | Mongo connection string & DB name |
-| `GENERATION_BACKEND` / `EMBEDDING_BACKEND` | `OPENAI` and/or `COHERE` |
-| `OPENAI_API_KEY` / `COHERE_API_KEY` | Provider API keys |
+| `GENERATION_BACKEND` / `EMBEDDING_BACKEND` | `OPENAI`, `COHERE` or `HUGGINGFACE` (local; needs `transformers` / `sentence-transformers`). OpenAI-compatible gateways (e.g. OpenRouter) use `OPENAI` + `OPENAI_API_URL` |
+| `OPENAI_API_KEY` / `OPENAI_API_URL` / `COHERE_API_KEY` | Provider API keys / optional OpenAI-compatible base URL |
 | `GENERATION_MODEL_ID` / `EMBEDDING_MODEL_ID` / `EMBEDDING_MODEL_SIZE` | Model selection |
+| `INPUT_DAFAULT_MAX_CHARACTERS` | Max characters of one text sent to the **embedding** model — keep ≥ process `chunk_size` (default 1000) |
+| `GENERATION_DAFAULT_MAX_INPUT_CHARACTERS` | Max characters of one message sent to the **generation** model (default 20000) |
+| `GENERATION_DAFAULT_MAX_TOKENS` / `GENERATION_DAFAULT_TEMPERATURE` | Generation output length / temperature |
 | `VECTOR_DB_BACKEND`, `VECTOR_DB_PATH`, `VECTOR_DB_DISTANCE_METHOD` | Qdrant config (local, file-based by default) |
 | `PRIMARY_LANG`, `DEFAULT_LANG` | RAG prompt template locale (`en` / `ar`) |
 
-Run the API:
+**Security settings (required).** The API refuses to start without `JWT_SECRET_KEY`. From `src/`:
 
 ```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+python -m helpers.security secret   # -> JWT_SECRET_KEY
+python -m helpers.security hash     # -> ADMIN_PASSWORD_HASH (TA password) - run again for STUDENT_ACCESS_CODE_HASH
+```
+
+| Variable | Description |
+|---|---|
+| `JWT_SECRET_KEY` | token signing key (>= 32 chars) |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD_HASH` | TA login (scrypt hash, never the plain password) |
+| `STUDENT_ACCESS_CODE_HASH` | hash of the course access code the TA shares with students |
+| `STUDENT_PROJECT_ID` | the course project students can ask about (the TA uploads materials to it) |
+| `ADMIN_TOKEN_EXPIRE_MINUTES` / `STUDENT_TOKEN_EXPIRE_MINUTES` | token lifetimes (default 60 / 480) |
+| `LOGIN_RATE_LIMIT` / `LOGIN_RATE_LIMIT_WINDOW_SECONDS` | login attempts per client IP (default 10 per 900 s) |
+| `STUDENT_ANSWER_RATE_LIMIT_PER_MINUTE` / `_PER_HOUR` | questions per student session (default 5 / 60) |
+
+Run the API (**one worker**: embedded Qdrant and the in-memory rate limiter are per-process):
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
 Verify it's up:
@@ -113,22 +140,22 @@ curl http://127.0.0.1:8000/api/v1/
 
 A ready-to-import [Postman collection](src/assets/mini-rag-app.postman_collection.json) is included for exploring the API directly.
 
-### 4. Run the Streamlit UI
-
-In a second terminal:
+### 4. Run the Streamlit apps
 
 ```bash
-cd streamlit_app
-pip install -r requirements.txt
+pip install -r streamlit_app/requirements.txt
+cp streamlit_app/.env.example streamlit_app/.env   # API_BASE_URL, ADMIN_DEFAULT_PROJECT_ID (= STUDENT_PROJECT_ID)
 
-cp .env.example .env      # point API_BASE_URL at your backend if not localhost:8000
-
-streamlit run app.py
+streamlit run streamlit_app/admin_app.py   --server.port 8502   # TA dashboard (keep this URL private)
+streamlit run streamlit_app/student_app.py --server.port 8501   # student chat
 ```
 
-Open the URL Streamlit prints (default `http://localhost:8501`) and walk through the pipeline: **Upload → Process → Index → Search → Chat**.
+- **TA:** log in with `ADMIN_USERNAME` + password → upload PDFs (type Lecture / Lab / Other, course, topic) →
+  **Process documents** → **Build search index** → check the status table. Delete materials from the Documents tab.
+- **Students:** open the student app, enter the course access code (+ optional first name) and chat in Arabic or English.
+  The conversation lives only in the browser session (`st.session_state`) and is sent as `chat_history`.
 
-See [`streamlit_app/README.md`](streamlit_app/README.md) for UI-specific details and the full endpoint mapping.
+Permissions are enforced by the backend (admin token vs student token), not by the UI.
 
 ## 🔌 API reference
 
@@ -143,11 +170,66 @@ All routes are mounted under `/api/v1` and scoped to a `project_id` path paramet
 | `GET` | `/api/v1/nlp/index/info/{project_id}` | Vector collection metadata |
 | `POST` | `/api/v1/nlp/index/search/{project_id}` | Semantic search |
 | `POST` | `/api/v1/nlp/index/answer/{project_id}` | RAG question answering |
+| `POST` | `/api/v1/auth/admin/login` | TA login → admin token |
+| `POST` | `/api/v1/auth/student/login` | course access code → student token |
+| `GET` | `/api/v1/auth/me` | validate a token |
+| `GET` | `/api/v1/data/assets/{project_id}` | course materials with processing / indexing status |
+| `DELETE` | `/api/v1/data/asset/{project_id}/{file_id}` | delete one material (file, chunks, vectors) |
+
+**Access:** health and login are public; `answer` needs a student or admin token (students only for
+`STUDENT_PROJECT_ID`, rate limited); every other endpoint needs an admin token. Send `Authorization: Bearer <token>`.
+
+### C course assistant options (all optional, backward compatible)
+
+**Upload** (`multipart/form-data`): `file` plus optional `doc_type` (`lecture` | `lab` | `other`, default `other`), `course`, `topic`.
+They are stored in the asset's `asset_config` together with the original file name and copied into every chunk's metadata
+(`document_name`, `doc_type`, `page_number` (1-based), `course`, `topic`, `file_id`).
+
+**Search / answer** body:
+
+```json
+{
+  "text": "ايه الفرق بين while و do-while؟",
+  "limit": 5,
+  "doc_type": "lecture",
+  "chat_history": [
+    {"role": "user", "content": "explain the for loop"},
+    {"role": "assistant", "content": "A for loop has three parts..."}
+  ]
+}
+```
+
+- `doc_type` restricts retrieval to lecture / lab / other chunks.
+- `chat_history` (answer only) is the client-side conversation (e.g. Streamlit `st.session_state`); the backend is stateless.
+  Only `user` / `assistant` roles are accepted; the last `RAG_HISTORY_MAX_MESSAGES` turns are used.
+- Answers follow the student's language (Arabic or English templates), use ```` ```c ```` for code and ```` ```text ```` for output.
+- The answer response adds `sources` (built by the backend from retrieved chunk metadata, never from LLM text):
+  `sources.cited` = excerpts the model reported using (validated against what was retrieved; empty when the answer is
+  not in the course material), `sources.retrieved` = everything retrieved, with similarity scores.
+
+> Changing `EMBEDDING_MODEL_ID` / `EMBEDDING_MODEL_SIZE` requires re-indexing. Existing collections built with another
+> model are refused (logged) instead of being mixed; use a new `project_id` or push with `do_reset=1`.
+
+## 🧪 Tests
+
+Run from the repository root (`pytest.ini` points at `src/`):
+
+```bash
+pip install -r tests/requirements.txt
+python -m pytest                       # unit + integration + Streamlit (integration needs local MongoDB; uses a temp DB)
+RUN_LIVE_TESTS=1 python -m pytest tests/live -s      # real OpenRouter + Hugging Face calls (uses src/.env)
+python tests/eval/run_embedding_eval.py BAAI/bge-m3  # retrieval benchmark (EN / AR / mixed)
+python tests/eval/run_generation_eval.py --models <openrouter-model-id>   # generation benchmark (12 API calls)
+python tests/e2e/run_e2e.py --model <openrouter-model-id>                 # full platform run: backend + both Streamlit apps
+```
+
+Unit and integration tests never call external APIs and never touch existing MongoDB databases, Qdrant collections or `src/assets`.
 
 ## 🛠️ Tech stack
 
-**Backend:** FastAPI · Motor (async MongoDB) · Qdrant · LangChain (text splitting) · PyMuPDF · OpenAI / Cohere SDKs
+**Backend:** FastAPI · Motor (async MongoDB) · Qdrant · LangChain (text splitting) · PyMuPDF · OpenAI SDK (OpenRouter) · sentence-transformers (BAAI/bge-m3)
 **Frontend:** Streamlit · Requests
+**Security:** PyJWT (HS256 tokens) · scrypt password hashing · in-memory rate limiting
 
 ## 📄 License
 
