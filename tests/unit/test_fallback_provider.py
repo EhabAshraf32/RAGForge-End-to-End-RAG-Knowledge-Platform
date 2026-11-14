@@ -78,3 +78,29 @@ def test_unconfigured_fallback_is_skipped():
     chain = LLMProviderFactory(nlp_settings(GROQ_API_KEY=None)).create_generation_client(
         "OPENAI", "m1", "GROQ:some-model")
     assert chain.names == ["OPENAI:m1"]
+
+
+def test_daily_cap_is_never_exceeded(monkeypatch):
+    import sys
+    import stores.llm.providers  # noqa: F401
+    mod = sys.modules["stores.llm.providers.FallbackProvider"]
+    day = ["2026-11-14"]
+    monkeypatch.setattr(mod.FallbackProvider, "_today", staticmethod(lambda: day[0]))
+    primary, capped = Fake([None] * 10), Fake(["c1", "c2", "c3"])
+    chain = FallbackProvider([primary, capped], ["P", "CF"], cooldown_seconds=0, daily_caps=[None, 2])
+    assert [chain.generate_text("q", chat_history=[]) for _ in range(3)] == ["c1", "c2", None]
+    assert len(capped.calls) == 2                       # third call never reached the capped provider
+    day[0] = "2026-11-15"                               # new UTC day -> cap resets
+    assert chain.generate_text("q", chat_history=[]) == "c3"
+
+
+def test_factory_parses_gemini_and_cap():
+    cfg = nlp_settings(GROQ_API_KEY="g", GEMINI_API_KEY="gm", CLOUDFLARE_ACCOUNT_ID="acc", CLOUDFLARE_API_TOKEN="cf")
+    chain = LLMProviderFactory(cfg).create_generation_client(
+        "GROQ", "openai/gpt-oss-120b",
+        "GEMINI:gemini-3.5-flash, CLOUDFLARE:@cf/meta/llama-3.3-70b-instruct-fp8-fast#20")
+    assert chain.names == ["GROQ:openai/gpt-oss-120b", "GEMINI:gemini-3.5-flash",
+                           "CLOUDFLARE:@cf/meta/llama-3.3-70b-instruct-fp8-fast"]
+    assert chain.daily_caps == [None, None, 20]
+    assert str(chain.providers[1].client.base_url).rstrip("/") == "https://generativelanguage.googleapis.com/v1beta/openai"
+    assert chain.providers[2].generation_model_id == "@cf/meta/llama-3.3-70b-instruct-fp8-fast"

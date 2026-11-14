@@ -37,6 +37,8 @@ class Settings(BaseSettings):
 
     # Groq (OpenAI-compatible) - usable as GENERATION_BACKEND="GROQ" or in GENERATION_FALLBACKS
     GROQ_API_KEY: Optional[str] = None
+    # Google Gemini (AI Studio key, OpenAI-compatible endpoint) - usable in GENERATION_FALLBACKS
+    GEMINI_API_KEY: Optional[str] = None
     # extra generation providers tried in order when the primary one fails (rate limit / quota / error):
     # comma-separated BACKEND:MODEL_ID, e.g. "GROQ:qwen/qwen3.8-27b,OPENAI:nvidia/nemotron-3.5-super-vl:free"
     GENERATION_FALLBACKS: Optional[str] = None

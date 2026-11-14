@@ -19,12 +19,18 @@ class LLMProviderFactory:
                 max_retries=max_retries,
             )
 
-        if provider == LLMEnums.GROQ.value:
-            if not getattr(self.config, "GROQ_API_KEY", None):
+        if provider in (LLMEnums.GROQ.value, LLMEnums.GEMINI.value):
+            # OpenAI-compatible free tiers
+            key, base_url = {
+                LLMEnums.GROQ.value: (getattr(self.config, "GROQ_API_KEY", None), "https://api.groq.com/openai/v1"),
+                LLMEnums.GEMINI.value: (getattr(self.config, "GEMINI_API_KEY", None),
+                                        "https://generativelanguage.googleapis.com/v1beta/openai"),
+            }[provider]
+            if not key:
                 return None
             return OpenAIProvider(
-                api_key = self.config.GROQ_API_KEY,
-                base_url = "https://api.groq.com/openai/v1",
+                api_key = key,
+                base_url = base_url,
                 default_input_max_characters=self.config.INPUT_DAFAULT_MAX_CHARACTERS,
                 default_generation_max_output_tokens=self.config.GENERATION_DAFAULT_MAX_TOKENS,
                 default_generation_temperature=self.config.GENERATION_DAFAULT_TEMPERATURE,
@@ -79,13 +85,15 @@ class LLMProviderFactory:
 
     def create_generation_client(self, backend: str, model_id: str, fallbacks: str = None):
         """The generation client used by the app: a single provider, or - when GENERATION_FALLBACKS is set -
-        a FallbackProvider trying `backend:model_id` first and then each `BACKEND:MODEL_ID` in order."""
-        specs = [(backend, model_id)]
+        a FallbackProvider trying `backend:model_id` first and then each `BACKEND:MODEL_ID[#DAILY_CAP]` in order.
+        `#N` limits that provider to N answers per UTC day (e.g. to protect a quota shared with embeddings)."""
+        specs = [(backend, model_id, None)]
         for item in (fallbacks or "").split(","):
             item = item.strip()
             if item:
                 fb_backend, _, fb_model = item.partition(":")
-                specs.append((fb_backend.strip().upper(), fb_model.strip()))
+                fb_model, _, cap = fb_model.partition("#")
+                specs.append((fb_backend.strip().upper(), fb_model.strip(), int(cap) if cap.strip() else None))
 
         if len(specs) == 1:
             client = self.create(provider=backend)
@@ -93,12 +101,13 @@ class LLMProviderFactory:
                 client.set_generation_model(model_id=model_id)
             return client
 
-        providers, names = [], []
-        for spec_backend, spec_model in specs:
+        providers, names, caps = [], [], []
+        for spec_backend, spec_model, cap in specs:
             client = self.create(provider=spec_backend, max_retries=0)  # hand over at once on 429
             if client is None or not spec_model:
                 continue
             client.set_generation_model(model_id=spec_model)
             providers.append(client)
             names.append(f"{spec_backend}:{spec_model}")
-        return FallbackProvider(providers, names) if providers else None
+            caps.append(cap)
+        return FallbackProvider(providers, names, daily_caps=caps) if providers else None

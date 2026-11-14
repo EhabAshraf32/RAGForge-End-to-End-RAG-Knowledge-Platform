@@ -8,6 +8,8 @@ class LLMEnums(Enum):
     CLOUDFLARE = "CLOUDFLARE"
     # Groq through its OpenAI-compatible endpoint
     GROQ = "GROQ"
+    # Google Gemini through its OpenAI-compatible endpoint
+    GEMINI = "GEMINI"
     # OPENROUTER="OPENAI-OPENROUTER"
 
 class OpenAIEnums(Enum):
