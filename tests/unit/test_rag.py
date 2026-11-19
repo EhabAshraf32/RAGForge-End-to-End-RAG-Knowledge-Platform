@@ -190,3 +190,22 @@ def test_b4_qdrant_returns_metadata_and_chunk_link(controller, project, indexed,
     assert res[0].metadata["document_name"] == "Lecture9.pdf"
     assert res[0].metadata["chunk_id"] == str(indexed[3].id)
     json.dumps([r.dict() for r in res])
+
+
+def test_transient_embedding_failure_is_retried(controller, project, monkeypatch):
+    """Regression: one failed embedding used to abort the whole rebuild and leave the index empty."""
+    import controllers.NLPController as nlp_mod
+    monkeypatch.setattr(nlp_mod.time, "sleep", lambda s: None)
+    real = controller.embedding_client.embed_text
+    failures = {"left": 2}
+
+    def flaky(text, document_type=None):
+        if failures["left"]:
+            failures["left"] -= 1
+            return None
+        return real(text, document_type)
+
+    controller.embedding_client.embed_text = flaky
+    chunk = DataChunk(chunk_text="for loop", chunk_metadata={}, chunk_order=1,
+                      chunk_project_id=project.id, chunk_asset_id=ObjectId())
+    assert controller.index_into_vector_db(project, [chunk], [0], do_reset=True) is True

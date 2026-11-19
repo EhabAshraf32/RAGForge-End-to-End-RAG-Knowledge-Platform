@@ -5,6 +5,7 @@ from typing import List
 import json
 import logging
 import re
+import time
 
 class NLPController(BaseController):
 
@@ -33,6 +34,17 @@ class NLPController(BaseController):
             json.dumps(collection_info, default=lambda x: x.__dict__)
         )
     
+    def embed_with_retry(self, text: str, attempts: int = 3, backoff_seconds: float = 2.0):
+        """Hosted embedding APIs fail transiently (network, short rate limits). One failed chunk used to
+        abort a whole index rebuild and leave the index empty, so retry with a growing pause."""
+        for attempt in range(attempts):
+            vector = self.embedding_client.embed_text(text=text, document_type=DocumentTypeEnum.DOCUMENT.value)
+            if vector:
+                return vector
+            if attempt < attempts - 1:
+                time.sleep(backoff_seconds * (attempt + 1))
+        return None
+
     def index_into_vector_db(self, project: Project, chunks: List[DataChunk],
                                    chunks_ids: List[int], 
                                    do_reset: bool = False):
@@ -53,11 +65,7 @@ class NLPController(BaseController):
         texts = [ c.chunk_text for c in chunks ]
         # keep a link back to the MongoDB chunk in the vector payload
         metadata = [ {**(c.chunk_metadata or {}), "chunk_id": str(c.id) if c.id else None} for c in chunks ]
-        vectors = [
-            self.embedding_client.embed_text(text=text, 
-                                             document_type=DocumentTypeEnum.DOCUMENT.value)
-            for text in texts
-        ]
+        vectors = [self.embed_with_retry(text) for text in texts]
 
         if any(not v for v in vectors):
             self.logger.error("Embedding failed for one or more chunks; aborting vector db insert")

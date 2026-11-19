@@ -17,7 +17,7 @@ import re
 import socket
 import sys
 import threading
-import time
+import time  # noqa: F811  (also used for retry pauses)
 import tomllib
 
 import requests
@@ -86,17 +86,29 @@ def main():
 
     summary = requests.get(f"{api}/data/assets/{project}", headers=h).json()["summary"]
     if processed_any or summary["index_needs_rebuild"] or summary["awaiting_indexing"]:
-        # full rebuild from MongoDB keeps the index exactly in sync with ALL documents (old + new)
-        r = requests.post(f"{api}/nlp/index/push/{project}", headers=h, json={"do_reset": 1}, timeout=3600)
-        print(f"  build index: {r.status_code} {r.json().get('inserted_items_count', r.json().get('signal'))} chunks")
+        # full rebuild from MongoDB keeps the index exactly in sync with ALL documents (old + new);
+        # verified afterwards and retried, because a failed rebuild leaves students without search
+        for attempt in range(1, 4):
+            r = requests.post(f"{api}/nlp/index/push/{project}", headers=h, json={"do_reset": 1}, timeout=3600)
+            print(f"  build index (attempt {attempt}): {r.status_code} "
+                  f"{r.json().get('inserted_items_count', r.json().get('signal'))} chunks")
+            summary = requests.get(f"{api}/data/assets/{project}", headers=h).json()["summary"]
+            if summary["total_chunks"] and summary["total_vectors"] == summary["total_chunks"]:
+                break
+            time.sleep(10 * attempt)
     else:
         print("  nothing new: the search index is already up to date")
     s = requests.get(f"{api}/data/assets/{project}", headers=h).json()["summary"]
     print(f"done: {s['total_documents']} documents ({s['lectures']} lectures, {s['labs']} labs), "
           f"{s['indexed_documents']} indexed, {s['processing_errors']} errors, {s['total_vectors']} vectors")
+    ok = s["total_chunks"] > 0 and s["total_vectors"] == s["total_chunks"]
+    if not ok:
+        print("\n" + "!" * 70 + f"\n  WARNING: the search index is NOT complete ({s['total_vectors']} of "
+              f"{s['total_chunks']} chunks).\n  Students will not get answers. Run this again in a few minutes;"
+              "\n  if it keeps failing, check Cloudflare / Qdrant Cloud.\n" + "!" * 70)
     server.should_exit = True
     sys.stdout.flush()
-    os._exit(0)
+    os._exit(0 if ok else 1)
 
 
 if __name__ == "__main__":
