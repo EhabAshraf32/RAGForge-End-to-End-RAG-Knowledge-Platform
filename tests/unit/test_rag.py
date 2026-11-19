@@ -194,7 +194,8 @@ def test_b4_qdrant_returns_metadata_and_chunk_link(controller, project, indexed,
 
 def test_transient_embedding_failure_is_retried(controller, project, monkeypatch):
     """Regression: one failed embedding used to abort the whole rebuild and leave the index empty."""
-    import controllers.NLPController as nlp_mod
+    import sys
+    nlp_mod = sys.modules["controllers.NLPController"]  # package re-exports the class under this name
     monkeypatch.setattr(nlp_mod.time, "sleep", lambda s: None)
     real = controller.embedding_client.embed_text
     failures = {"left": 2}
